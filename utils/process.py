@@ -18,6 +18,7 @@ import random
 import numpy as np
 from tqdm import tqdm
 from collections import Counter
+from collections import defaultdict
 
 # Utils functions copied from Slot-gated model, origin url:
 # 	https://github.com/MiuLab/SlotGated-SLU/blob/master/utils.py
@@ -212,6 +213,109 @@ class Processor(object):
         sent_acc = Evaluator.semantic_acc(pred_slot, real_slot, exp_pred_intent, real_intent)
 
         return slot_f1, intent_acc, sent_acc
+
+    @staticmethod
+    def validate_per_intent(model_path, dataset_path, batch_size):
+        """
+        validation will write mistaken samples to files and make scores.
+        """
+
+        model = torch.load(model_path, map_location='cpu')
+        dataset = torch.load(dataset_path, map_location='cpu')
+
+        # Get the sentence list in test dataset.
+        sent_list = dataset.test_sentence
+
+        pred_slot, real_slot, exp_pred_intent, real_intent, pred_intent = Processor.prediction(
+            model, dataset, "test", batch_size
+        )
+
+        all_data = defaultdict(dict)
+        for i in set(real_intent):
+            all_data[i] = {'pred_slot': [], 'real_slot': [], 'exp_pred_intent': [], 'real_intent': [], 'pred_intent': []}
+
+        length = len(real_intent)
+        for i in range(length):
+            all_data[real_intent[i]]['pred_slot'].append(pred_slot[i])
+            all_data[real_intent[i]]['real_slot'].append(real_slot[i])
+            all_data[real_intent[i]]['exp_pred_intent'].append(exp_pred_intent[i])
+            all_data[real_intent[i]]['real_intent'].append(real_intent[i])
+            all_data[real_intent[i]]['pred_intent'].append(pred_intent[i])
+
+        slot_f1 = miulab.computeF1Score(pred_slot, real_slot)[0]
+        intent_acc = Evaluator.accuracy(exp_pred_intent, real_intent)
+        sent_acc = Evaluator.semantic_acc(pred_slot, real_slot, exp_pred_intent, real_intent)
+
+
+        result_per_intent = defaultdict(list)
+        result_per_intent['overall'] = [slot_f1, intent_acc, sent_acc, len(real_intent)]
+        for intent in all_data:
+            pred_slot = all_data[intent]['pred_slot']
+            real_slot = all_data[intent]['real_slot']
+            exp_pred_intent = all_data[intent]['exp_pred_intent']
+            real_intent = all_data[intent]['real_intent']
+            pred_intent = all_data[intent]['pred_intent']
+            length = len(exp_pred_intent)
+
+            slot_f1 = miulab.computeF1Score(pred_slot, real_slot)[0]
+            intent_acc = Evaluator.accuracy(exp_pred_intent, real_intent)
+            sent_acc = Evaluator.semantic_acc(pred_slot, real_slot, exp_pred_intent, real_intent)
+            result_per_intent[intent] = [slot_f1, intent_acc, sent_acc, length]
+
+        return result_per_intent
+
+        # # write all result in
+        # result_dir = os.path.join(dataset.save_dir, "result")
+        # if not os.path.exists(result_dir):
+        #     os.mkdir(result_dir)
+        #
+        # result_file_path = os.path.join(result_dir, "test_result.txt")
+        #
+        # # Write all results
+        # with open(result_file_path, 'w') as fw:
+        #     for w_list, r_slot_list, p_slot_list, p_intent_list, r_intent, p_intent in \
+        #             zip(sent_list, real_slot, pred_slot, pred_intent, real_intent, exp_pred_intent):
+        #         for w, r_slot, p_slot, p_intent_ in zip(w_list, r_slot_list, p_slot_list, p_intent_list):
+        #             fw.write(w + '\t' + r_slot + '\t' + p_slot + '\t' + p_intent_ + '\n')
+        #         fw.write(r_intent + '\t' + p_intent + '\n\n')
+
+
+        # # To make sure the directory for save error prediction.
+        # mistake_dir = os.path.join(dataset.save_dir, "error")
+        # if not os.path.exists(mistake_dir):
+        #     os.mkdir(mistake_dir)
+        #
+        # slot_file_path = os.path.join(mistake_dir, "slot.txt")
+        # intent_file_path = os.path.join(mistake_dir, "intent.txt")
+        # both_file_path = os.path.join(mistake_dir, "both.txt")
+        #
+        # # Write those sample with mistaken slot prediction.
+        # with open(slot_file_path, 'w') as fw:
+        #     for w_list, r_slot_list, p_slot_list in zip(sent_list, real_slot, pred_slot):
+        #         if r_slot_list != p_slot_list:
+        #             for w, r, p in zip(w_list, r_slot_list, p_slot_list):
+        #                 fw.write(w + '\t' + r + '\t' + p + '\n')
+        #             fw.write('\n')
+
+        # # Write those sample with mistaken intent prediction.
+        # with open(intent_file_path, 'w') as fw:
+        #     for w_list, p_intent_list, r_intent, p_intent in zip(sent_list, pred_intent, real_intent, exp_pred_intent):
+        #         if p_intent != r_intent:
+        #             for w, p in zip(w_list, p_intent_list):
+        #                 fw.write(w + '\t' + p + '\n')
+        #             fw.write(r_intent + '\t' + p_intent + '\n\n')
+        #
+        # # Write those sample both have intent and slot errors.
+        # with open(both_file_path, 'w') as fw:
+        #     for w_list, r_slot_list, p_slot_list, p_intent_list, r_intent, p_intent in \
+        #             zip(sent_list, real_slot, pred_slot, pred_intent, real_intent, exp_pred_intent):
+        #
+        #         if r_slot_list != p_slot_list or r_intent != p_intent:
+        #             for w, r_slot, p_slot, p_intent_ in zip(w_list, r_slot_list, p_slot_list, p_intent_list):
+        #                 fw.write(w + '\t' + r_slot + '\t' + p_slot + '\t' + p_intent_ + '\n')
+        #             fw.write(r_intent + '\t' + p_intent + '\n\n')
+
+
 
     @staticmethod
     def prediction(model, dataset, mode, batch_size):
